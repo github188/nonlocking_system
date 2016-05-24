@@ -1,9 +1,9 @@
 ####
  The  project's global is to set up a non-locked system within the environment of  multi-thread.Year,you maybe have read  the codes of libevent ,etc.To a certain extent,they all build on the single thread.
  
- ###The designing  ideas
+###The designing  ideas
  
- ####
+####
  
 A non-locked system's realise often make full use of the automic operation.such as:
 ```
@@ -26,6 +26,9 @@ type the "ulimit -a " to check the system params,If it is too small,use "ulimit 
 
 ###Others
 
-1989428128@qq.com jweih
+####
+jweih
+####
+1989428128@qq.com 
   
  
