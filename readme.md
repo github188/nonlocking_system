@@ -1,7 +1,7 @@
 ####
  The  project's global is to set up a non-locked system within the environment of  multi-thread.Year,you maybe have read  the codes of libevent ,etc.To a certain extent,they all build on the single thread.
  
-###The designing  ideas
+###Ideas
  
 ####
  
