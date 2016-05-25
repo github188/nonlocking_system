@@ -267,7 +267,6 @@ int thread_pool_startup(void)
 	{
 		dbg_printf("thread_pool_init is fail!\n");
 		return(-1);
-
 	}
 
 	int i = 0;
