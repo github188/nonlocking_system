@@ -14,10 +14,8 @@
 #define 	FILE_NAME 	"thread_pool:"
 
 
-/*对于按键事件，应该先把按键事件读取出来，然后再传递到线程池中处理*/
 
 #define USER_DATA_MAX_LENGTH 	(4096)
-
 
 
 typedef struct pthread_node
