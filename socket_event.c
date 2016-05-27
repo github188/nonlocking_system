@@ -53,6 +53,8 @@ typedef struct socket_event
 	int dist_pipe_write;
 	int cmd_pipe_read;
 	int cmd_pipe_write;
+	int socket_send_pipe_read;
+	int socket_send_pipe_write;
 	socket_node_t node[SOCKET_MAX_NUM];
 	
 }socket_event_t;
@@ -251,12 +253,6 @@ int socket_event_startup(void)
 		dbg_printf("poll_add is fail!\n");
 		return(-1);
 	}
-
-	
-
-
-
-	
 
 	return(0);
 }

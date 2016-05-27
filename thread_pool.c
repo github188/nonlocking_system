@@ -26,7 +26,7 @@ typedef struct pthread_node
 	void (*fun)(void * arg);
 	unsigned int id;
 	int  user_data_length;
-	char user_data_contex[USER_DATA_MAX_LENGTH];
+	char user_data_contex[USER_DATA_MAX_LENGTH]; /*开头放置各回调函数参数的结构体，后面跟数据*/
 	
 }pthread_node_t;
 
