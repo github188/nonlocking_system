@@ -4,6 +4,7 @@
 
 #include "common.h"
 #include "thread_pool.h"
+#include "socket_event.h"
 
 
 #undef  	DBG_ON
@@ -33,7 +34,7 @@ void test_pool(void * ud)
 		return;
 	}
 	dbg_printf("c=======%d\n",node->c);
-	sleep(100);
+	sleep(1);
 	
 
 
@@ -49,6 +50,15 @@ int main(int argc,char ** argv)
 	{
 		dbg_printf("thread_pool_startup is fail!\n");
 	}
+
+	ret = socket_event_startup();
+	if(0 != ret)
+	{
+		dbg_printf("socket_event_startup is fail!\n");
+		return(-1);
+	}
+
+	
 	test_node_t node;
 	unsigned int counts = 0;
 	while(1)

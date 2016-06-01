@@ -4,7 +4,7 @@
 
 
 
-
+int socket_event_startup(void);
 
 
 #endif

@@ -4,6 +4,8 @@
 #include <pthread.h>
 #include <string.h>
 #include <errno.h>
+#include <semaphore.h>
+
 #include "common.h"
 #include "thread_pool.h"
 
@@ -21,8 +23,7 @@
 typedef struct pthread_node
 {
 	pthread_t pthread_id;
-	int pipe_read;
-	int pipe_write;
+	sem_t sem_block;
 	void (*fun)(void * arg);
 	unsigned int id;
 	int  user_data_length;
@@ -109,8 +110,8 @@ static void* thread_pool_fun(void * arg)
 	int is_run = 1;
 	while(is_run)
 	{
-		ret = read(node->pipe_read,&pipe_data,sizeof(pipe_data));
-		if(ret>0 && NULL != node->fun)
+		sem_wait(&node->sem_block);
+		if(NULL != node->fun)
 		{
 			node->fun(node->user_data_contex);	
 			node->fun = NULL;
@@ -170,15 +171,7 @@ static int thread_pool_init(void)
 	for(i=0;i<THREAD_POOL_MAX;++i)
 	{
 		pthread_node_t * node = &pool->node[i];
-		int fd[2] = {-1,-1};
-		if(pipe(fd)<0)
-		{
-			dbg_printf("pipe is fail! i==%d errno==%d\n",i,errno);
-			perror("error:");
-			goto fail;
-		}
-		node->pipe_read = fd[0];
-		node->pipe_write = fd[1];
+		sem_init(&node->sem_block, 0, 0);
 		node->fun = NULL;
 		node->id = i;
 		pthread_create(&(node->pthread_id), NULL, thread_pool_fun, (void *)node);
@@ -252,7 +245,7 @@ int thread_add_job(void (*pfun)(void * arg),void * ud,int ud_lenght)
 	node->fun = pfun;
 	node->user_data_length = ud_lenght;
 	memmove(node->user_data_contex,ud,ud_lenght);
-	write(node->pipe_write,&node->id,sizeof(node->id));
+	sem_post(&node->sem_block);
 	return(0);
 
 }
