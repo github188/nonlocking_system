@@ -61,7 +61,7 @@ int main(int argc,char ** argv)
 	
 	test_node_t node;
 	unsigned int counts = 0;
-	while(1)
+	while(0)
 	{
 
 		node.c = counts ++;

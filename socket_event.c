@@ -139,30 +139,24 @@ static int event_id_enqueue(socket_event_t * handle,unsigned int id)
 static  int event_id_dequeue(socket_event_t * handle)
 {
 
-
-
 	int ret = -1;
 	if(NULL==handle || handle->dist_pipe_read < 0)
 	{
 		dbg_printf("check the param!\n");
 		return(-1);
 	}
-
-
-
 	struct timeval tv = {0,0};
 	fd_set fds;
 	FD_ZERO(&fds);
 	FD_SET(handle->dist_pipe_read, &fds);
+	ret = select(handle->dist_pipe_read+1, &fds, NULL, NULL, &tv);
 
-	dbg_printf("handle->dist_pipe_read====%d\n",handle->dist_pipe_read );
-//	ret = select(handle->dist_pipe_read+1, &fds, NULL, NULL, &tv);
-
-//	if(ret <= 0)return(-1);
+	if(ret <= 0)return(-1);
 
 	int id = -1;
 	ret = read(handle->dist_pipe_read,&id,sizeof(id));
 	return(id);
+	
 }
 
 
@@ -253,7 +247,11 @@ static void * event_poll(void * arg)
 		for(i=0;i<n;++i)
 		{
 			node = 	(event_node_t*)poll_events[i].ud;
-			dbg_printf("the id is %d\n",node->id);
+			dbg_printf("the server id is %d\n",node->id);
+			if(NULL != node && NULL != node->pfun)
+			{
+				node->pfun(node->ud);	
+			}
 		}
 
 
@@ -377,6 +375,25 @@ fail:
 
 
 
+
+static void  cmd_pipe_server(void * arg)
+{
+
+	int ret  = -1;
+	cmd_node_t node_read;
+	ret = event_read_cmd(&node_read);
+	if(ret<=0)
+	{
+		dbg_printf("cmd_pipe_server read is fail!\n");
+		return;
+	}
+
+	dbg_printf("send cmd's id===%d\n",node_read.id);
+	
+}
+
+
+
 int socket_event_startup(void)
 {
 	int ret = -1;
@@ -396,33 +413,21 @@ int socket_event_startup(void)
 		event_node_t * node = &handle->node[i];
 		node->id = i;
 		node->fd = -1;
-	//	event_id_enqueue(handle,node->id);
+		event_id_enqueue(handle,node->id);
 	}
-
-
-
-	
 
 	int id = event_id_dequeue(handle);
-	while(1)
-	{
-		dbg_printf("the id is %d\n",id);
-		sleep(1);
-	}
-
 	if(id < 0)
 	{
 		dbg_printf("please inqueue the id first!\n");
 		return(-1);
 	}
-	else
-	{
 
-
-
-	}
 	event_node_t * node_pipe = &handle->node[id];
 	node_pipe->fd = handle->cmd_pipe_read;
+	node_pipe->id = id;
+	node_pipe->ud = NULL;
+	node_pipe->pfun = cmd_pipe_server;
 	
 	ret = poll_add(handle->poll_fd,handle->cmd_pipe_read,node_pipe);
 	if(0 != ret)
@@ -434,6 +439,13 @@ int socket_event_startup(void)
 	pthread_t poll_ptd;
 	pthread_create(&(poll_ptd), NULL, event_poll, (void *)handle);
 	pthread_detach(poll_ptd);
+
+	sleep(3);
+	while(1)
+	{
+		event_write_cmd(SOCKET_OPEN,100,100);
+		sleep(1);
+	}
 
 
 	return(0);
