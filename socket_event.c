@@ -5,11 +5,18 @@
 #include <sys/types.h> 
 #include <sys/select.h> 
 #include <pthread.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <string.h>
+#include <stdint.h>
+
+
 
 #include "poll.h"
-
-
 #include "common.h"
+
+
 
 
 #undef  	DBG_ON
@@ -19,6 +26,33 @@
 
 
 #define  EVENT_FD_NUM	(1024)
+
+typedef  enum type_cmd
+{	
+	CMD_BEGIN,
+	SOCKET_OPEN,
+	SOCKET_CLOSE,
+	SOCKET_LISTEN,
+	SOCKET_START,
+	SOCKET_BIND,
+	CMD_END,
+	
+}type_cmd_m;
+
+
+
+
+
+
+typedef enum type_status
+{
+	TYPE_INVALID,
+	TYPE_LISTEN,
+	TYPE_CONNECTING,
+	TYPE_CONNECTED,
+	TYPE_PACCEPT,
+	TYPE_BIND,
+}type_status_m;
 
 
 
@@ -55,9 +89,11 @@ typedef  struct rd_list
 typedef  struct event_node
 {
 	int fd;
+	int status;
 	unsigned int id;
 	void (*pfun)(void * arg);
 	void * ud;
+	uintptr_t handle; 
 }event_node_t;
 
 
@@ -81,17 +117,7 @@ typedef struct socket_event
 
 
 
-typedef  enum type_cmd
-{	
-	CMD_BEGIN,
-	SOCKET_OPEN,
-	SOCKET_CLOSE,
-	SOCKET_LISTEN,
-	SOCKET_START,
-	SOCKET_BIND,
-	CMD_END,
-	
-}type_cmd_m;
+
 
 
 
@@ -105,6 +131,14 @@ typedef  struct cmd_node
 	unsigned int id;
 	
 }cmd_node_t;
+
+
+union sockaddr_all 
+{
+	struct sockaddr s;
+	struct sockaddr_in v4;
+	struct sockaddr_in6 v6;
+};
 
 
 
@@ -216,13 +250,191 @@ static int event_read_cmd(cmd_node_t * node)
 }
 
 
-int event_add_watch()
+static void socket_keepalive(int fd) 
+{
+	int keepalive = 1;
+	setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (void *)&keepalive , sizeof(keepalive));
+}
+
+
+
+
+static int socket_do_bind(const char * host,int port,int protocol,int * family)
 {
 
+	if(IPPROTO_UDP !=protocol && IPPROTO_TCP != protocol)
+	{
+		dbg_printf("the protocol is not ok!\n");
+		return(-1);
+	}
 
+	int ret = -1;
+	int fd = -1;
+	int status = 0;
+	struct addrinfo ai_hints;
+	struct addrinfo *ai_list = NULL;
+	char portstr[16]={'\0'};
+	
+	if(NULL==host || 0==host[0])
+	{
+		host = "0.0.0.0";
+	}
+	snprintf(portstr,16,"%d",port);
+	memset(&ai_hints,0,sizeof(ai_hints));
+	ai_hints.ai_family = AF_UNSPEC;
+	ai_hints.ai_protocol = protocol;
+	
+	if(IPPROTO_TCP==protocol)
+	{
+		ai_hints.ai_socktype = SOCK_STREAM;	
+	}
+	else
+	{
+		ai_hints.ai_socktype = SOCK_DGRAM;
+	}
+	
+	status = getaddrinfo(host, portstr, &ai_hints, &ai_list);
+	if (status != 0 )
+	{
+		dbg_printf("getaddrinfo is fail!\n");
+		return (-1);
+	}
 
-	return(0);	
+	*family = ai_list->ai_family;
+	fd = socket(*family,ai_hints.ai_socktype,0);
+	if(fd < 0)
+	{
+		dbg_printf("socket is fail!\n");
+		goto fail;
+	}
+
+	int reuse = 1;
+	ret = setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,(void*)&reuse,sizeof(int));
+	if(ret < 0)
+	{
+		dbg_printf("setsockopt is fail!\n");
+		goto fail;
+	}
+
+	ret = bind(fd,(struct sockaddr *)ai_list->ai_addr,ai_list->ai_addrlen);
+	if(ret < 0)
+	{
+		dbg_printf("bind is fail!\n");
+		goto fail;
+	}
+	
+	freeaddrinfo(ai_list);
+	return(fd);
+
+fail:
+
+	if(NULL != ai_list)
+	{
+		freeaddrinfo(ai_list);
+		ai_list = NULL;
+	}
+	return(-1);
+
 }
+
+
+
+static int  socket_do_listen(const char * host,int port,int backlog)
+{
+	int family = 0;
+	int listen_fd = -1;
+	int ret = -1;
+	listen_fd = socket_do_bind(host,port,IPPROTO_TCP,&family);
+	if(listen_fd < 0)
+	{
+		dbg_printf("socket_do_bind is fail!\n");
+		return(-1);
+	}
+	
+	ret = listen(listen_fd,backlog);
+	if(ret < 0)
+	{
+		dbg_printf("listen is fail!\n");
+		close(listen_fd);
+		listen_fd = -1;
+		return(-1);
+	}
+
+	ret = event_write_cmd(SOCKET_LISTEN,listen_fd,0);
+	if(ret < 0)
+	{
+		dbg_printf("event_write_cmd is fail!\n");
+		close(listen_fd);
+		listen_fd = -1;
+
+		return(-1);
+	}
+	
+	return(0);
+}
+
+
+
+
+static void  socket_listen_server(void * arg)
+{
+	event_node_t * node = (event_node_t*)arg;
+	if(NULL == node)
+	{
+		dbg_printf("please check the param!\n");
+		return;
+	}
+	socket_event_t * handle = (socket_event_t*)node->handle;
+	if(NULL==handle)
+	{
+		dbg_printf("handle is not been inited!\n");
+		return;
+	}
+	
+	int client_fd = -1;
+	union sockaddr_all u;
+	socklen_t len = sizeof(u);
+
+	client_fd = accept(node->fd,&u.s,&len);
+	if(client_fd < 0)
+	{
+		dbg_printf("accept is wrong!\n");
+		return;
+	}
+
+	int id = event_id_dequeue(handle);
+	if(client_fd < 0 )
+	{
+		close(client_fd);
+		client_fd = -1;
+	}
+
+	event_node_t * client_node = (event_node_t*)&handle->node[id];
+	
+	client_node->fd = client_fd;
+	client_node->id = id;
+	client_node->pfun = NULL;
+	client_node->ud = NULL;
+	socket_keepalive(client_fd);
+	poll_nonblocking(client_fd);
+
+	int ret = -1;
+	ret = poll_add(handle->poll_fd,client_node->fd,client_node);
+	if(0 != ret)
+	{
+		event_id_enqueue(handle,id);
+		close(client_node->fd);
+		client_node->fd = -1;
+		return;
+	}
+	
+	dbg_printf("the client id==%d is accept ok!\n",id);
+
+}
+
+
+
+
 
 static void * event_poll(void * arg)
 {
@@ -381,11 +593,66 @@ static void  cmd_pipe_server(void * arg)
 
 	int ret  = -1;
 	cmd_node_t node_read;
+	socket_event_t * handle = (socket_event_t*)arg;
+	if(NULL == handle)
+	{
+		dbg_printf("the handle has not been initd!\n");
+		return;
+
+	}
+
 	ret = event_read_cmd(&node_read);
 	if(ret<=0)
 	{
 		dbg_printf("cmd_pipe_server read is fail!\n");
 		return;
+	}
+	switch(node_read.cmd)
+	{
+		case SOCKET_LISTEN:
+		{
+			if(0 != node_read.id || node_read.fd <= 0)
+			{
+				dbg_printf("the id have alloced !\n");
+				break;
+			}
+			int id = event_id_dequeue(handle);
+			if(id < 0)
+			{
+				dbg_printf("calloc id is fail!\n");
+				close(node_read.fd);
+				node_read.fd = -1;
+				break;
+			}
+
+			int ret = -1;
+			event_node_t * node = &handle->node[id];
+			node->fd = node_read.fd;
+			node->id = id;
+			node->pfun = socket_listen_server;
+			node->ud = node;
+			ret = poll_add(handle->poll_fd,node->fd,node);
+			if(0 != ret)
+			{
+				event_id_enqueue(handle,id);
+				close(node_read.fd);
+				node_read.fd = -1;
+				break;
+			}
+			dbg_printf("create listen id is ok!\n");
+
+			break;
+		}
+
+		default:
+		{
+			dbg_printf("unknow cmd!\n");
+			break;
+		}
+
+
+
+
 	}
 
 	dbg_printf("send cmd's id===%d\n",node_read.id);
@@ -413,6 +680,9 @@ int socket_event_startup(void)
 		event_node_t * node = &handle->node[i];
 		node->id = i;
 		node->fd = -1;
+		node->pfun = NULL;
+		node->ud = NULL;
+		node->handle = (uintptr_t)handle;
 		event_id_enqueue(handle,node->id);
 	}
 
@@ -426,7 +696,7 @@ int socket_event_startup(void)
 	event_node_t * node_pipe = &handle->node[id];
 	node_pipe->fd = handle->cmd_pipe_read;
 	node_pipe->id = id;
-	node_pipe->ud = NULL;
+	node_pipe->ud = handle;
 	node_pipe->pfun = cmd_pipe_server;
 	
 	ret = poll_add(handle->poll_fd,handle->cmd_pipe_read,node_pipe);
@@ -443,8 +713,8 @@ int socket_event_startup(void)
 	sleep(3);
 	while(1)
 	{
-		event_write_cmd(SOCKET_OPEN,100,100);
-		sleep(1);
+		socket_do_listen("127.0.0.1",8888,32);
+		sleep(2);
 	}
 
 
